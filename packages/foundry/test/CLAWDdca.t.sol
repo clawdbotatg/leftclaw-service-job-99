@@ -30,6 +30,12 @@ contract CLAWDdcaTest is Test {
     uint256 constant RATE_NUM = 100e18;
     uint256 constant RATE_DENOM = 1e6;
 
+    // v2 fee constants (must match CLAWDdca.sol)
+    uint256 constant KEEPER_FEE_BPS = 20; // 0.20%
+    uint256 constant PROTOCOL_FEE_BPS = 10; // 0.10%
+    uint256 constant BURN_FEE_BPS = 20; // 0.20%
+    uint256 constant BPS_DENOM = 10_000;
+
     function setUp() public {
         // Deploy mock contracts then etch their runtime code to the hardcoded production addresses.
         MockERC20 usdcImpl = new MockERC20("USD Coin", "USDC", 6);
@@ -256,9 +262,10 @@ contract CLAWDdcaTest is Test {
         uint256 id = _createPosition(ALICE, 1000e6, 100e6, 1);
 
         uint256 swapAmount = 100e6;
-        uint256 keeperFee = (swapAmount * 39) / 10_000; // 0.39%
-        uint256 protocolFee = (swapAmount * 30) / 10_000; // 0.30%
-        uint256 swapInput = swapAmount - keeperFee - protocolFee;
+        uint256 keeperFee = (swapAmount * KEEPER_FEE_BPS) / BPS_DENOM; // 0.20%
+        uint256 protocolFee = (swapAmount * PROTOCOL_FEE_BPS) / BPS_DENOM; // 0.10%
+        uint256 burnFee = (swapAmount * BURN_FEE_BPS) / BPS_DENOM; // 0.20%
+        uint256 swapInput = swapAmount - keeperFee - protocolFee - burnFee;
 
         uint256 keeperUsdcBefore = IERC20(USDC_ADDR).balanceOf(KEEPER);
         uint256 contractUsdcBefore = IERC20(USDC_ADDR).balanceOf(address(dca));
@@ -277,12 +284,13 @@ contract CLAWDdcaTest is Test {
         assertEq(clawdAccrued, expectedClawd);
         assertEq(lastEpoch, dca.currentEpoch());
 
-        // Protocol fee accrued.
+        // Protocol and burn fees accrued.
         assertEq(dca.protocolFeeBalance(), protocolFee);
+        assertEq(dca.burnFeeBalance(), burnFee);
 
-        // Contract USDC: started with 1000e6, lost swapAmount (sent to router as swapInput, keeper as keeperFee,
-        // and protocolFee stayed in the contract as protocolFeeBalance). Net: contract should hold
-        // (1000e6 - swapAmount) usable + protocolFee accumulated = 1000e6 - swapInput - keeperFee.
+        // Contract USDC: started with 1000e6, sent swapInput to router and keeperFee to keeper.
+        // protocolFee and burnFee remain in contract (as tracked balances). Net held in contract:
+        // 1000e6 - swapInput - keeperFee.
         assertEq(
             IERC20(USDC_ADDR).balanceOf(address(dca)),
             contractUsdcBefore - swapInput - keeperFee
@@ -365,12 +373,13 @@ contract CLAWDdcaTest is Test {
         // amountOutMinimum = expectedOut * (10000 - 300) / 10000 = expectedOut * 9700 / 10000
         // Force router to output less than that.
         uint256 swapAmount = 100e6;
-        uint256 keeperFee = (swapAmount * 39) / 10_000;
-        uint256 protocolFee = (swapAmount * 30) / 10_000;
-        uint256 swapInput = swapAmount - keeperFee - protocolFee;
+        uint256 keeperFee = (swapAmount * KEEPER_FEE_BPS) / BPS_DENOM;
+        uint256 protocolFee = (swapAmount * PROTOCOL_FEE_BPS) / BPS_DENOM;
+        uint256 burnFee = (swapAmount * BURN_FEE_BPS) / BPS_DENOM;
+        uint256 swapInput = swapAmount - keeperFee - protocolFee - burnFee;
         uint256 expectedOut = (swapInput * RATE_NUM) / RATE_DENOM;
         uint256 minOut = (expectedOut * 9700) / 10_000;
-        // Router will return half of minOut.
+        // Router will return less than minOut.
         MockSwapRouter(ROUTER_ADDR).setForceOutput(minOut - 1);
 
         vm.prank(KEEPER);
@@ -637,7 +646,7 @@ contract CLAWDdcaTest is Test {
         vm.prank(KEEPER);
         dca.executeDCA(id);
 
-        uint256 expectedFee = (100e6 * 30) / 10_000;
+        uint256 expectedFee = (100e6 * PROTOCOL_FEE_BPS) / BPS_DENOM;
         assertEq(dca.protocolFeeBalance(), expectedFee);
 
         vm.prank(BOB);
@@ -765,9 +774,10 @@ contract CLAWDdcaTest is Test {
         uint256 id = _createPosition(ALICE, 1000e6, 100e6, 1);
 
         uint256 swapAmount = 100e6;
-        uint256 keeperFee = (swapAmount * 39) / 10_000;
-        uint256 protocolFee = (swapAmount * 30) / 10_000;
-        uint256 swapInput = swapAmount - keeperFee - protocolFee;
+        uint256 keeperFee = (swapAmount * KEEPER_FEE_BPS) / BPS_DENOM;
+        uint256 protocolFee = (swapAmount * PROTOCOL_FEE_BPS) / BPS_DENOM;
+        uint256 burnFee = (swapAmount * BURN_FEE_BPS) / BPS_DENOM;
+        uint256 swapInput = swapAmount - keeperFee - protocolFee - burnFee;
         uint256 expectedOut = (swapInput * RATE_NUM) / RATE_DENOM;
 
         // Keeper supplies amountOutMinimum directly. Use 95% of expectedOut as a 5% slippage tolerance.
@@ -793,9 +803,10 @@ contract CLAWDdcaTest is Test {
         uint256 id = _createPosition(ALICE, 1000e6, 100e6, 1);
 
         uint256 swapAmount = 100e6;
-        uint256 keeperFee = (swapAmount * 39) / 10_000;
-        uint256 protocolFee = (swapAmount * 30) / 10_000;
-        uint256 swapInput = swapAmount - keeperFee - protocolFee;
+        uint256 keeperFee = (swapAmount * KEEPER_FEE_BPS) / BPS_DENOM;
+        uint256 protocolFee = (swapAmount * PROTOCOL_FEE_BPS) / BPS_DENOM;
+        uint256 burnFee = (swapAmount * BURN_FEE_BPS) / BPS_DENOM;
+        uint256 swapInput = swapAmount - keeperFee - protocolFee - burnFee;
         uint256 expectedOut = (swapInput * RATE_NUM) / RATE_DENOM;
 
         // Force the router to deliver less than the keeper's supplied minimum.
@@ -932,5 +943,87 @@ contract CLAWDdcaTest is Test {
         vm.prank(ALICE);
         dca.closePosition(id);
         assertFalse(dca.isRipe(id)); // inactive
+    }
+
+    // -------------------------------------------------------------------------
+    // executeBurn (v2)
+    // -------------------------------------------------------------------------
+
+    function test_ExecuteBurn_AccumulatesAcrossExecutions() public {
+        // Two positions execute → burnFeeBalance accumulates for both.
+        uint256 id1 = _createPosition(ALICE, 1000e6, 100e6, 1);
+        uint256 id2 = _createPosition(BOB, 500e6, 50e6, 1);
+
+        vm.prank(KEEPER);
+        dca.executeDCA(id1);
+        vm.prank(KEEPER);
+        dca.executeDCA(id2);
+
+        uint256 expected1 = (100e6 * BURN_FEE_BPS) / BPS_DENOM;
+        uint256 expected2 = (50e6 * BURN_FEE_BPS) / BPS_DENOM;
+        assertEq(dca.burnFeeBalance(), expected1 + expected2);
+    }
+
+    function test_ExecuteBurn_Happy() public {
+        uint256 id = _createPosition(ALICE, 1000e6, 100e6, 1);
+        vm.prank(KEEPER);
+        dca.executeDCA(id);
+
+        uint256 burnAccrued = dca.burnFeeBalance();
+        assertGt(burnAccrued, 0);
+
+        // The burn address had 0 CLAWD before.
+        address dead = 0x000000000000000000000000000000000000dEaD;
+        uint256 deadClawdBefore = IERC20(CLAWD_ADDR).balanceOf(dead);
+
+        // Any address can call executeBurn.
+        address anyone = address(0xBEEFCAFE);
+        vm.prank(anyone);
+        dca.executeBurn();
+
+        // burnFeeBalance zeroed.
+        assertEq(dca.burnFeeBalance(), 0);
+
+        // CLAWD was sent to 0xdead.
+        uint256 deadClawdAfter = IERC20(CLAWD_ADDR).balanceOf(dead);
+        assertGt(deadClawdAfter - deadClawdBefore, 0);
+
+        // The expected CLAWD ≈ burnAccrued * RATE_NUM / RATE_DENOM (within slippage tolerance).
+        // With DEFAULT_SLIPPAGE_BPS = 300 the swap won't revert at mock rate 100e18/1e6.
+        uint256 expectedClawd = (burnAccrued * RATE_NUM) / RATE_DENOM;
+        // Allow for slippage floor — actual must be ≥ expectedClawd * 9700 / 10000.
+        assertGe(deadClawdAfter - deadClawdBefore, (expectedClawd * 9700) / 10_000);
+    }
+
+    function test_ExecuteBurn_RevertsZeroBalance() public {
+        vm.expectRevert(CLAWDdca.ZeroAmount.selector);
+        dca.executeBurn();
+    }
+
+    function test_ExecuteBurn_RevertsWhenSlippageTooHigh() public {
+        uint256 id = _createPosition(ALICE, 1000e6, 100e6, 1);
+        vm.prank(KEEPER);
+        dca.executeDCA(id);
+
+        uint256 burnAccrued = dca.burnFeeBalance();
+        uint256 expectedOut = (burnAccrued * RATE_NUM) / RATE_DENOM;
+        uint256 minOut = (expectedOut * 9700) / 10_000;
+        // Force router to return less than slippage floor.
+        MockSwapRouter(ROUTER_ADDR).setForceOutput(minOut - 1);
+
+        vm.expectRevert(bytes("Too little received"));
+        dca.executeBurn();
+    }
+
+    function test_ExecuteBurn_BurnFeeAccruedInDCAExecuted() public {
+        uint256 id = _createPosition(ALICE, 1000e6, 100e6, 1);
+
+        uint256 swapAmount = 100e6;
+        uint256 expectedBurnFee = (swapAmount * BURN_FEE_BPS) / BPS_DENOM;
+
+        vm.prank(KEEPER);
+        dca.executeDCA(id);
+
+        assertEq(dca.burnFeeBalance(), expectedBurnFee);
     }
 }

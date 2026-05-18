@@ -27,6 +27,13 @@ const StatsPage: NextPage = () => {
     watch: true,
   });
 
+  const { data: burnEvents } = useScaffoldEventHistory({
+    contractName: "CLAWDdca",
+    eventName: "BurnExecuted",
+    fromBlock: DEPLOYED_ON_BLOCK,
+    watch: true,
+  });
+
   const { totalUsdcSpent, totalClawdReceived, totalKeeperFees, totalProtocolFees, executionCount, keeperLeaderboard } =
     useMemo(() => {
       let totalUsdcSpent = 0n;
@@ -58,6 +65,17 @@ const StatsPage: NextPage = () => {
       };
     }, [executedEvents]);
 
+  const { totalClawdBurned, totalUsdcBurned } = useMemo(() => {
+    let totalClawdBurned = 0n;
+    let totalUsdcBurned = 0n;
+    for (const log of burnEvents ?? []) {
+      const a = (log as any).args ?? {};
+      if (typeof a.clawdBurned === "bigint") totalClawdBurned += a.clawdBurned;
+      if (typeof a.usdcBurned === "bigint") totalUsdcBurned += a.usdcBurned;
+    }
+    return { totalClawdBurned, totalUsdcBurned };
+  }, [burnEvents]);
+
   const positionsCreated = createdEvents?.length ?? 0;
   const positionsClosed = closedEvents?.length ?? 0;
   const activePositions = Math.max(0, positionsCreated - positionsClosed);
@@ -79,6 +97,8 @@ const StatsPage: NextPage = () => {
         <StatCard label="Positions created" value={positionsCreated.toString()} />
         <StatCard label="Keeper fees paid" value={`$${formatUsdc(totalKeeperFees)}`} />
         <StatCard label="Protocol fees" value={`$${formatUsdc(totalProtocolFees)}`} />
+        <StatCard label="USDC burned (fees)" value={`$${formatUsdc(totalUsdcBurned)}`} />
+        <StatCard label="CLAWD burned" value={formatClawd(totalClawdBurned)} />
       </div>
 
       <div className="card bg-base-100 shadow-sm border border-base-300">

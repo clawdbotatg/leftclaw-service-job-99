@@ -1,26 +1,28 @@
 import { formatUnits } from "viem";
 
-// Contract constants — must match CLAWDdca.sol on Base mainnet (verified
-// 0x8c81CAeCA48f521Df24B65F1C22c11150830F088). Hardcoded here so we don't
+// Contract constants — must match CLAWDdca.sol on Base mainnet (v2 verified
+// 0xa16095e72936aD6DAb012ec1b95222F6FCB5f5C2). Hardcoded here so we don't
 // pay an extra eth_call to read immutables on every page mount; we re-derive
 // human-readable times client-side from `EPOCH_DURATION` (3 hours).
 export const EPOCH_DURATION_SECONDS = 3 * 60 * 60; // 3 hours
-export const KEEPER_FEE_BPS = 39n; // 0.39%
+export const KEEPER_FEE_BPS = 20n; // 0.20% (v2)
 export const PROTOCOL_FEE_BPS = 10n; // 0.10%
+export const BURN_FEE_BPS = 20n; // 0.20% — accumulates for permissionless executeBurn()
 export const BPS_DENOMINATOR = 10_000n;
 export const DEFAULT_SLIPPAGE_BPS = 300n; // 3.00%
 export const MAX_SLIPPAGE_BPS = 1_000n; // 10.00%
 
-export const CLAWDDCA_ADDRESS = "0x8c81CAeCA48f521Df24B65F1C22c11150830F088" as const;
+// v2 contract (feature job #190 — fee structure update with burn mechanism)
+export const CLAWDDCA_ADDRESS = "0xa16095e72936aD6DAb012ec1b95222F6FCB5f5C2" as const;
 export const USDC_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as const;
 export const CLAWD_ADDRESS = "0x9f86dB9fc6f7c9408e8Fda3Ff8ce4e78ac7a6b07" as const;
 
 export const USDC_DECIMALS = 6;
 export const CLAWD_DECIMALS = 18;
 
-// Block where CLAWDdca was deployed on Base — used as `fromBlock` for event
+// Block where CLAWDdca v2 was deployed on Base — used as `fromBlock` for event
 // queries so we don't scan all of Base history every page load.
-export const DEPLOYED_ON_BLOCK = 45660684n;
+export const DEPLOYED_ON_BLOCK = 46170369n;
 
 export type IntervalPreset = {
   key: "3h" | "daily" | "weekly" | "custom";

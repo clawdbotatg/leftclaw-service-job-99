@@ -7,7 +7,7 @@ import { GenericContractsDeclaration } from "~~/utils/scaffold-eth/contract";
 const deployedContracts = {
   8453: {
     CLAWDdca: {
-      address: "0x8c81caeca48f521df24b65f1c22c11150830f088",
+      address: "0xa16095e72936ad6dab012ec1b95222f6fcb5f5c2",
       abi: [
         {
           type: "constructor",
@@ -23,6 +23,32 @@ const deployedContracts = {
         {
           type: "function",
           name: "BPS_DENOMINATOR",
+          inputs: [],
+          outputs: [
+            {
+              name: "",
+              type: "uint256",
+              internalType: "uint256",
+            },
+          ],
+          stateMutability: "view",
+        },
+        {
+          type: "function",
+          name: "BURN_ADDRESS",
+          inputs: [],
+          outputs: [
+            {
+              name: "",
+              type: "address",
+              internalType: "address",
+            },
+          ],
+          stateMutability: "view",
+        },
+        {
+          type: "function",
+          name: "BURN_FEE_BPS",
           inputs: [],
           outputs: [
             {
@@ -172,6 +198,19 @@ const deployedContracts = {
         },
         {
           type: "function",
+          name: "burnFeeBalance",
+          inputs: [],
+          outputs: [
+            {
+              name: "",
+              type: "uint256",
+              internalType: "uint256",
+            },
+          ],
+          stateMutability: "view",
+        },
+        {
+          type: "function",
           name: "closePosition",
           inputs: [
             {
@@ -242,6 +281,13 @@ const deployedContracts = {
               internalType: "uint256[]",
             },
           ],
+          outputs: [],
+          stateMutability: "nonpayable",
+        },
+        {
+          type: "function",
+          name: "executeBurn",
+          inputs: [],
           outputs: [],
           stateMutability: "nonpayable",
         },
@@ -587,6 +633,25 @@ const deployedContracts = {
         },
         {
           type: "event",
+          name: "BurnExecuted",
+          inputs: [
+            {
+              name: "usdcBurned",
+              type: "uint256",
+              indexed: false,
+              internalType: "uint256",
+            },
+            {
+              name: "clawdBurned",
+              type: "uint256",
+              indexed: false,
+              internalType: "uint256",
+            },
+          ],
+          anonymous: false,
+        },
+        {
+          type: "event",
           name: "CLAWDWithdrawn",
           inputs: [
             {
@@ -640,6 +705,12 @@ const deployedContracts = {
             },
             {
               name: "protocolFee",
+              type: "uint256",
+              indexed: false,
+              internalType: "uint256",
+            },
+            {
+              name: "burnFee",
               type: "uint256",
               indexed: false,
               internalType: "uint256",
@@ -930,7 +1001,7 @@ const deployedContracts = {
         },
       ],
       inheritedFunctions: {},
-      deployedOnBlock: 45660684,
+      deployedOnBlock: 46170369,
     },
   },
 } as const;

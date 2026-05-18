@@ -37,10 +37,17 @@ interface IQuoterV2 {
 /**
  * @title CLAWDdca
  * @notice Permissionless dollar-cost-averaging engine: users park USDC, anyone (a "keeper") triggers
- *         the swap once a position is ripe, the contract pays the keeper and a protocol fee, swaps the
- *         remainder for CLAWD via Uniswap V3, and credits CLAWD to the position. Owner withdraws CLAWD
- *         or closes the position at any time. Pausable; withdrawals stay open while paused.
- * @dev Hardcoded to the Base mainnet token + router addresses listed below. Two keeper entrypoints:
+ *         the swap once a position is ripe, the contract pays the keeper and protocol fees, accrues a
+ *         burn fee to `burnFeeBalance`, swaps the remainder for CLAWD via Uniswap V3, and credits CLAWD
+ *         to the position. Owner withdraws CLAWD or closes the position at any time. Pausable; withdrawals
+ *         stay open while paused.
+ *
+ * @dev v2 fee structure (v1 was keeper=39bps, protocol=30bps):
+ *      - Keeper: 20 bps (paid immediately to msg.sender in USDC)
+ *      - Protocol: 10 bps (accrues to protocolFeeBalance, owner collects)
+ *      - Burn: 20 bps (accrues to burnFeeBalance, any caller triggers executeBurn() to swap→0xdead)
+ *
+ *      Hardcoded to Base mainnet token + router addresses listed below. Two keeper entrypoints:
  *      - `executeDCAWithMin(positionId, amountOutMinimum)` — production-safe path. The keeper computes
  *        `amountOutMinimum` off-chain (e.g. via a static QuoterV2 call from the keeper UI / RPC) and
  *        passes it in. The contract enforces it directly through SwapRouter02. This is sandwich-resistant
@@ -79,9 +86,13 @@ contract CLAWDdca is Ownable2Step, Pausable, ReentrancyGuard {
     // Constants
     // ---------------------------------------------------------------------------------------------
 
+    /// @notice Standard dead-address burn destination. CLAWD tokens sent here are permanently removed from circulation.
+    address public constant BURN_ADDRESS = 0x000000000000000000000000000000000000dEaD;
+
     uint256 public constant EPOCH_DURATION = 3 hours;
-    uint256 public constant KEEPER_FEE_BPS = 39; // 0.39%
-    uint256 public constant PROTOCOL_FEE_BPS = 30; // 0.30%
+    uint256 public constant KEEPER_FEE_BPS = 20; // 0.20%
+    uint256 public constant PROTOCOL_FEE_BPS = 10; // 0.10%
+    uint256 public constant BURN_FEE_BPS = 20; // 0.20% — accrues to burnFeeBalance for permissionless burn
     uint256 public constant DEFAULT_SLIPPAGE_BPS = 300; // 3%
     uint256 public constant MAX_SLIPPAGE_BPS = 1000; // 10%
     uint256 public constant BPS_DENOMINATOR = 10_000;
@@ -107,6 +118,7 @@ contract CLAWDdca is Ownable2Step, Pausable, ReentrancyGuard {
     mapping(address => uint256[]) public positionsByOwner;
     uint256 public nextPositionId; // monotonic, starts at 1
     uint256 public protocolFeeBalance; // USDC fee accrual, withdrawable by owner
+    uint256 public burnFeeBalance; // USDC fee accrual, permissionlessly convertible to CLAWD burn via executeBurn()
     bytes public swapPath;
 
     // ---------------------------------------------------------------------------------------------
@@ -123,12 +135,14 @@ contract CLAWDdca is Ownable2Step, Pausable, ReentrancyGuard {
         uint256 clawdReceived,
         uint256 keeperFee,
         uint256 protocolFee,
+        uint256 burnFee,
         address indexed keeper
     );
     event CLAWDWithdrawn(uint256 indexed positionId, address indexed owner, uint256 amount);
     event PositionClosed(uint256 indexed positionId);
     event SlippageUpdated(uint256 indexed positionId, uint256 bps);
     event ProtocolFeesCollected(uint256 amount);
+    event BurnExecuted(uint256 usdcBurned, uint256 clawdBurned);
     event SwapPathUpdated(bytes path);
 
     // ---------------------------------------------------------------------------------------------
@@ -336,13 +350,15 @@ contract CLAWDdca is Ownable2Step, Pausable, ReentrancyGuard {
         uint256 swapAmount = p.amountPerSwap > p.usdcBalance ? p.usdcBalance : p.amountPerSwap;
         uint256 keeperFee = (swapAmount * KEEPER_FEE_BPS) / BPS_DENOMINATOR;
         uint256 protocolFee = (swapAmount * PROTOCOL_FEE_BPS) / BPS_DENOMINATOR;
-        uint256 swapInput = swapAmount - keeperFee - protocolFee;
+        uint256 burnFee = (swapAmount * BURN_FEE_BPS) / BPS_DENOMINATOR;
+        uint256 swapInput = swapAmount - keeperFee - protocolFee - burnFee;
         uint256 slippageBps_ = p.slippageBps;
 
         // ---- effects (CEI) ----
         p.usdcBalance -= swapAmount;
         p.lastExecutedEpoch = currentEpoch_;
         protocolFeeBalance += protocolFee;
+        burnFeeBalance += burnFee;
         if (p.usdcBalance == 0) p.active = false;
 
         // ---- interactions ----
@@ -377,7 +393,7 @@ contract CLAWDdca is Ownable2Step, Pausable, ReentrancyGuard {
         uint256 clawdReceived = IERC20(CLAWD).balanceOf(address(this)) - clawdBefore;
         p.clawdAccrued += clawdReceived;
 
-        emit DCAExecuted(positionId, swapInput, clawdReceived, keeperFee, protocolFee, msg.sender);
+        emit DCAExecuted(positionId, swapInput, clawdReceived, keeperFee, protocolFee, burnFee, msg.sender);
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -391,6 +407,46 @@ contract CLAWDdca is Ownable2Step, Pausable, ReentrancyGuard {
         protocolFeeBalance = 0;
         IERC20(USDC).safeTransfer(owner(), amount);
         emit ProtocolFeesCollected(amount);
+    }
+
+    /**
+     * @notice Swap all accumulated burn fees (USDC) for CLAWD and send to 0xdead. Permissionless —
+     *         anyone can call this to trigger the burn. Uses the same `swapPath` as DCA executions.
+     * @dev Routes CLAWD through this contract (balance-before/after) for accurate burn accounting,
+     *      then transfers the received CLAWD to BURN_ADDRESS. Uses on-chain QuoterV2 for slippage
+     *      (same MEV caveat as `executeDCA`). `burnFeeBalance` is zeroed before the swap (CEI).
+     */
+    function executeBurn() external nonReentrant {
+        uint256 usdcAmount = burnFeeBalance;
+        if (usdcAmount == 0) revert ZeroAmount();
+
+        // CEI — zero state before external calls.
+        burnFeeBalance = 0;
+
+        // Same-block QuoterV2 quote, applying default slippage tolerance.
+        uint256 expectedOut;
+        (expectedOut,,,) = IQuoterV2(QUOTER).quoteExactInput(swapPath, usdcAmount);
+        uint256 amountOutMinimum = (expectedOut * (BPS_DENOMINATOR - DEFAULT_SLIPPAGE_BPS)) / BPS_DENOMINATOR;
+
+        IERC20(USDC).forceApprove(SWAP_ROUTER, usdcAmount);
+
+        // Route to this contract so we can measure the actual CLAWD received.
+        uint256 clawdBefore = IERC20(CLAWD).balanceOf(address(this));
+
+        ISwapRouter02.ExactInputParams memory params = ISwapRouter02.ExactInputParams({
+            path: swapPath,
+            recipient: address(this),
+            amountIn: usdcAmount,
+            amountOutMinimum: amountOutMinimum
+        });
+        ISwapRouter02(SWAP_ROUTER).exactInput(params);
+
+        uint256 clawdBurned = IERC20(CLAWD).balanceOf(address(this)) - clawdBefore;
+
+        // Transfer all received CLAWD to the burn address.
+        if (clawdBurned > 0) IERC20(CLAWD).safeTransfer(BURN_ADDRESS, clawdBurned);
+
+        emit BurnExecuted(usdcAmount, clawdBurned);
     }
 
     /// @notice Update the Uniswap V3 swap path. Must start with USDC and end with CLAWD; intermediate

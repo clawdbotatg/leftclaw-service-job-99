@@ -8,7 +8,14 @@ import { useAccount, usePublicClient, useSwitchChain } from "wagmi";
 import { WalletStrip } from "~~/components/dca/WalletStrip";
 import { useScaffoldEventHistory, useScaffoldReadContract, useScaffoldWriteContract } from "~~/hooks/scaffold-eth";
 import { useWriteAndOpen } from "~~/hooks/scaffold-eth/useWriteAndOpen";
-import { BPS_DENOMINATOR, DEPLOYED_ON_BLOCK, KEEPER_FEE_BPS, formatUsdc, intervalLabel } from "~~/utils/dca";
+import {
+  BPS_DENOMINATOR,
+  CLAWDDCA_ADDRESS,
+  DEPLOYED_ON_BLOCK,
+  KEEPER_FEE_BPS,
+  formatUsdc,
+  intervalLabel,
+} from "~~/utils/dca";
 import { notification } from "~~/utils/scaffold-eth";
 import { getParsedErrorWithAllAbis } from "~~/utils/scaffold-eth/contract";
 
@@ -58,6 +65,12 @@ const KeepersPage: NextPage = () => {
     watch: true,
   });
 
+  const { data: burnFeeBalance } = useScaffoldReadContract({
+    contractName: "CLAWDdca",
+    functionName: "burnFeeBalance",
+    watch: true,
+  });
+
   const [positionRows, setPositionRows] = useState<RipePosition[]>([]);
   const [posLoading, setPosLoading] = useState(false);
 
@@ -92,7 +105,7 @@ const KeepersPage: NextPage = () => {
         const results = await Promise.all(
           allIds.map(id =>
             publicClient.readContract({
-              address: "0x8c81CAeCA48f521Df24B65F1C22c11150830F088",
+              address: CLAWDDCA_ADDRESS,
               abi: dcaAbi,
               functionName: "positions",
               args: [id],
@@ -150,6 +163,24 @@ const KeepersPage: NextPage = () => {
 
   const [busyId, setBusyId] = useState<string | null>(null);
   const [batchBusy, setBatchBusy] = useState(false);
+  const [burnBusy, setBurnBusy] = useState(false);
+
+  const handleExecuteBurn = async () => {
+    setBurnBusy(true);
+    try {
+      await writeAndOpen(() =>
+        writeDca({
+          functionName: "executeBurn",
+        }),
+      );
+      notification.success("CLAWD burn executed!");
+    } catch (e) {
+      const msg = getParsedErrorWithAllAbis(e, base.id);
+      notification.error(msg);
+    } finally {
+      setBurnBusy(false);
+    }
+  };
 
   const handleExecute = async (positionId: bigint) => {
     setBusyId(positionId.toString());
@@ -194,11 +225,57 @@ const KeepersPage: NextPage = () => {
       <header className="flex flex-col gap-1 text-center">
         <h1 className="text-3xl font-bold my-0">Keeper Network</h1>
         <p className="opacity-80 my-0">
-          Permissionless keepers earn 0.39% USDC per swap. Anyone can run executions — including you.
+          Permissionless keepers earn 0.2% USDC per swap. An additional 0.2% accrues for CLAWD burns — trigger it below.
+          Anyone can run executions — including you.
         </p>
       </header>
 
       <WalletStrip />
+
+      <div className="card bg-base-100 shadow-sm border border-base-300">
+        <div className="card-body gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h2 className="text-xl font-bold my-0">CLAWD Burn</h2>
+              <p className="text-sm opacity-70 my-0">
+                Accrued burn fees:{" "}
+                <span className="font-semibold">${formatUsdc(burnFeeBalance as bigint | undefined)} USDC</span>
+              </p>
+            </div>
+            {isConnected && wrongNetwork ? (
+              <button
+                className="btn btn-warning btn-sm"
+                disabled={isSwitching}
+                onClick={() => switchChain({ chainId: base.id })}
+              >
+                {isSwitching ? <span className="loading loading-spinner loading-xs" /> : null}
+                Switch to Base
+              </button>
+            ) : (
+              <button
+                className="btn btn-secondary btn-sm"
+                disabled={!isConnected || !burnFeeBalance || (burnFeeBalance as bigint) === 0n || burnBusy}
+                onClick={handleExecuteBurn}
+              >
+                {burnBusy ? <span className="loading loading-spinner loading-xs" /> : null}
+                Execute Burn
+              </button>
+            )}
+          </div>
+          <p className="text-xs opacity-60 my-0">
+            Swaps all accrued USDC burn fees for CLAWD via Uniswap V3 and sends to{" "}
+            <a
+              href={`https://basescan.org/address/0x000000000000000000000000000000000000dEaD`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="link"
+            >
+              0xdead
+            </a>
+            .
+          </p>
+        </div>
+      </div>
 
       <div className="card bg-base-100 shadow-sm border border-base-300">
         <div className="card-body gap-3">
